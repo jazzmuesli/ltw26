@@ -7,13 +7,14 @@ Die Seite enthaelt:
   * eine Karte fuer ganz Mecklenburg-Vorpommern,
   * eine Detailkarte fuer den Landkreis Ludwigslust-Parchim,
   * Auswahlfelder fuer Partei, Modell und Karteninhalt
-    (Prognose / Ist-Ergebnis / Ist minus Prognose),
+    (Prognose / Ist-Ergebnis / Ist minus Prognose /
+     LTW26 minus LTW 2021 / LTW26 minus BTW 2025),
   * Kennzahlen, Koeffizienten mit p-Werten, Rechenbeispiel und Gemeindetabelle,
   * eine ausfuehrliche Erklaerung des Verfahrens mit Quellenangaben.
 
 Alle Karten sind reines SVG. Die Gemeindegeometrie ist partei- und modellunabhaengig
 und wird nur einmal eingebettet; gewechselt wird nur die Fuellfarbe. Deshalb
-bleibt die Datei trotz 7 Parteien x 5 Modelle x 3 Karteninhalten klein.
+bleibt die Datei trotz 7 Parteien x 5 Modellen x 5 Karteninhalten klein.
 
 Aufruf: python3 build_predicted_html.py
 """
@@ -63,6 +64,11 @@ SOCIO_KEYS = {"ln_einwohner", "ln_flaeche", "ln_dichte", "ueber65", "auslaender"
 
 MISSING_FILL = "#e9edf0"
 
+# Die Farbleiter der beiden Vergleichskarten ist dieselbe wie bei "Ist - Prognose":
+# es ist dieselbe Groesse, nur mit einer anderen Vergleichsgroesse.
+PP_GRADIENT = ("linear-gradient(90deg,#a50026,#d73027,#f46d43,#fdae61,#ffffbf,"
+               "#a6d96a,#1a9850,#006837)")
+
 # Karteninhalte: key -> (Titel, Art, Farbleiter, CSS-Verlauf)
 METRICS: Dict[str, dict] = {
     "residual": {
@@ -73,8 +79,9 @@ METRICS: Dict[str, dict] = {
         "unit": "Prozentpunkte",
         "note": "Grün = die Partei erzielte mehr, als das Modell vorausgesagt hat. "
                 "Rot = sie erzielte weniger.",
-        "gradient": "linear-gradient(90deg,#a50026,#d73027,#f46d43,#fdae61,#ffffbf,"
-                    "#a6d96a,#1a9850,#006837)",
+        "gradient": PP_GRADIENT,
+        "missing": "Grau = für diese Gemeinde liegt keine Prognose vor.",
+        "model_dependent": True,
     },
     "predicted": {
         "label": "Prognose (Modell)",
@@ -85,6 +92,8 @@ METRICS: Dict[str, dict] = {
         "note": "Je dunkler desto höher der vorausgesagte Anteil. Die Skala beginnt bei 0 und endet "
                 "beim 98. Perzentil der Werte dieser Partei.",
         "gradient": "linear-gradient(90deg,#ffffe5,#fee391,#fec44f,#fe9929,#cc4c02,#662506)",
+        "missing": "Grau = für diese Gemeinde liegt keine Prognose vor.",
+        "model_dependent": True,
     },
     "actual": {
         "label": "Ist-Ergebnis LTW26",
@@ -95,10 +104,50 @@ METRICS: Dict[str, dict] = {
         "note": "Je dunkler desto höher der amtliche Anteil aus der LTW26. Die Skala beginnt bei 0 "
                 "und endet beim 98. Perzentil der Werte dieser Partei.",
         "gradient": "linear-gradient(90deg,#f7fcfd,#ccece6,#a1d9b4,#67b9c0,#3690b0,#045a8d)",
+        "missing": "Grau = für diese Gemeinde liegt kein Ergebnis vor.",
+        "model_dependent": False,
+    },
+    "vs_ltw21": {
+        "label": "LTW26 − LTW 2021",
+        "title": "Gewinne und Verluste seit der Landtagswahl 2021",
+        "kind": "diverging",
+        "cmap": "RdYlGn",
+        "unit": "Prozentpunkte",
+        "note": "Grün = die Partei hat gegenüber der Landtagswahl 2021 Punkte gewonnen, "
+                "rot = sie hat Punkte verloren. Beide Werte sind Zweitstimmenanteile ohne Briefwahl "
+                "derselben Gemeinde, die Differenz ist also direkt vergleichbar.",
+        "gradient": PP_GRADIENT,
+        "feature": "LTW21",
+        "prev_label": "LTW 2021",
+        "missing": "Grau = für diese Gemeinde liegt kein Ergebnis von 2021 vor; bei der BSW "
+                   "durchgängig, weil die Partei 2021 in MV nicht zur Wahl stand.",
+        "model_dependent": False,
+    },
+    "vs_btw25": {
+        "label": "LTW26 − BTW 2025",
+        "title": "Gewinne und Verluste gegenüber der Bundestagswahl 2025",
+        "kind": "diverging",
+        "cmap": "RdYlGn",
+        "unit": "Prozentpunkte",
+        "note": "Grün = die Partei hat gegenüber der Bundestagswahl 2025 Punkte gewonnen, "
+                "rot = sie hat Punkte verloren. Landtags- und Bundestagswahl sind verschiedene "
+                "Wahlen; verglichen werden die Zweitstimmenanteile ohne Briefwahl derselben Gemeinde.",
+        "gradient": PP_GRADIENT,
+        "feature": "BTW25",
+        "prev_label": "BTW 2025",
+        "missing": "Grau = für diese Gemeinde liegt kein Ergebnis von 2025 vor.",
+        "model_dependent": False,
     },
 }
+# Parteien, fuer die es zu einer Vergleichswahl keine Gegenrechnung geben kann,
+# weil die Partei damals nicht im Wahlgebiet stand. Statt einer Schein-Differenz
+# (etwa BSW 2026 minus 0,0 = 5,4pp) bleibt die Gemeinde dann grau.
+NOT_COMPARABLE = {"vs_ltw21": {"BSW"}}
 DEFAULT_PARTY = "GRÜNE"
 DEFAULT_METRIC = "residual"
+
+# Karteninhalte, die eine Vergleichswahl gegen das Ist-Ergebnis stellen.
+COMPARISON_METRICS = {key: spec for key, spec in METRICS.items() if "feature" in spec}
 
 
 # --------------------------------------------------------------------------
@@ -368,6 +417,42 @@ CSS = """
 # --------------------------------------------------------------------------
 # Erklaerungstext
 # --------------------------------------------------------------------------
+def comparison_summary(payload: dict, parties: Sequence[str]) -> str:
+    """Landesweite Zweitstimmenanteile je Partei, nach gueltigen Stimmen gewichtet."""
+    rows = []
+    for party in parties:
+        shares: Dict[str, List[Tuple[float, float]]] = {key: [] for key in COMPARISON_METRICS}
+        actual: List[Tuple[float, float]] = []
+        for m in payload["municipalities"].values():
+            weight = m["ltw26_valid_votes"] or 0.0
+            if weight <= 0 or m["actual"].get(party) is None:
+                continue
+            actual.append((m["actual"][party], weight))
+            for metric, spec in COMPARISON_METRICS.items():
+                if diff_value(m, metric, party) is None:
+                    continue
+                previous = m["features"][party][spec["feature"]]
+                shares[metric].append((previous, weight))
+
+        def share(rows_: Sequence[Tuple[float, float]]) -> Optional[float]:
+            total = sum(weight for _, weight in rows_)
+            return sum(value * weight for value, weight in rows_) / total if total > 0 else None
+
+        cells = []
+        for metric, spec in COMPARISON_METRICS.items():
+            previous = share(shares[metric])
+            now = share(actual) if shares[metric] else None
+            difference = (now - previous) if (now is not None and previous is not None) else None
+            cells.append(f'<td class="num">{de(previous)}</td>'
+                         f'<td class="num">{de(now)}</td>'
+                         f'<td class="num">{signed(difference)}</td>')
+        rows.append(f"<tr><td>{html.escape(party)}</td>{''.join(cells)}</tr>")
+    return ("<tr><th>Partei</th>"
+            "<th class='num'>LTW 2021</th><th class='num'>LTW26</th><th class='num'>Δ</th>"
+            "<th class='num'>BTW 2025</th><th class='num'>LTW26</th><th class='num'>Δ</th></tr>"
+            + "".join(rows))
+
+
 def explanation_section(payload: dict, parties: Sequence[str],
                         naive_table_html: str, default_model_key: str) -> str:
     meta = payload["meta"]
@@ -543,7 +628,34 @@ def explanation_section(payload: dict, parties: Sequence[str],
        die AfD fällt das ins Gewicht: Ihr Ergebnis 2026 liegt vielerorts deutlich über dem, was die
        Vorgängerwerte erwarten ließen.</div>
 
-    <h3>8. Warum fehlen die Briefwahlergebnisse?</h3>
+    <h3>8. Die Vergleichskarten: LTW26 gegen 2021 und gegen 2025</h3>
+    <p>Zwei der fünf Karteninhalte kommen ohne Modell aus. Sie rechnen in jeder Gemeinde
+       <strong>Ist-Anteil der LTW26 minus Anteil derselben Partei bei einer früheren Wahl</strong> und
+       färben die Gemeinde nach dieser Differenz: Grün für Gewinne, Rot für Verluste, Farbmitte bei
+       null. Aufgetragen wird je <em>Gemeinde und Partei</em>, nicht landesweit — deshalb unterscheiden
+       sich die Karten von Land zu Land auch dann, wenn eine Partei im Landesmittel gleich bleibt.</p>
+    <p><strong>Warum das zulässig ist.</strong> Beide Seiten stammen aus derselben Aufbereitung:
+       Zweitstimmenanteile je Gemeinde, jeweils <em>ohne</em> Briefwahl (dazu Abschnitt 9). Die
+       Differenz zweier so berechneter Anteile ist damit ein reiner Vergleich derselben Grundlage —
+       kein Schätzwert und keine Modellrechnung. Um die Differenz zu bilden, braucht es nur zwei
+       Tabellenspalten; das Modell ist nicht beteiligt, weshalb der Vergleich auch für jede Partei
+       und jede Gemeinde funktioniert, unabhängig davon, ob das Modell für sie überhaupt einen Wert
+       liefert.</p>
+    <p><strong>Ein Unterschied ist wichtig.</strong> „LTW26 − BTW 2025“ stellt eine Landtagswahl einer
+       Bundestagswahl gegenüber. Das sind zwei verschiedene Wahlen mit unterschiedlichen
+       Kandidatenlisten, Wahlkampfthemen und Wahlbeteiligung; die Differenz misst daher
+       <em>die Veränderung zwischen zwei Wahlterminen</em> und nicht die Wirkung eines einzelnen
+       Faktors. Der Vergleich mit der LTW 2021 — dieselbe Wahlart, fünf Jahre zurück — ist die
+       engere Gegenrechnung.</p>
+    <p>Landesweit, nach gültigen Zweitstimmen gewichtet, ergibt sich für die Parteien mit
+       vollständiger Vergleichsgrundlage:</p>
+    <table id="cmp-table">{comparison_summary(payload, parties)}</table>
+    <p class="map-note">Der Wert für die BSW bleibt in der Spalte „LTW 2021“ leer: Die Partei stand 2021
+       in Mecklenburg-Vorpommern nicht zur Wahl. Statt einer Schein-Differenz aus „Ergebnis 2026 minus
+       0,0&nbsp;%“ bleiben diese Gemeinden auf der Karte grau — dieselbe Regelung wie bei fehlenden
+       Prognosewerten.</p>
+
+    <h3>9. Warum fehlen die Briefwahlergebnisse?</h3>
     <p>Die Landeswahlleiterin veröffentlicht die Briefwahlergebnisse auf <em>Amtsebene</em>, nicht je
        Gemeinde. Sie lassen sich daher keiner einzelnen Gemeinde zuordnen. Weil eine Briefwählerin
        andere Parteien wählt als jemand, der ins Wahllokal geht, wäre eine Schätzung der Zuordnung
@@ -551,7 +663,7 @@ def explanation_section(payload: dict, parties: Sequence[str],
        Vergleichswerten <em>und</em> im Ergebnis. Damit ist die Grundlage für alle Wahlen identisch;
        die folgende Kontrollrechnung belegt die Größenordnung des Unterschieds.</p>
 
-    <h3>9. Kontrollrechnung gegen das amtliche Landesergebnis</h3>
+    <h3>10. Kontrollrechnung gegen das amtliche Landesergebnis</h3>
     <p>Wenn die Aufbereitung stimmt, muss die Summe aller Gemeinden zuzüglich der Briefwahl das
        veröffentlichte Landesergebnis ergeben. Für die LTW26 ergibt sich:</p>
     <table><tr><th>Partei</th>
@@ -561,7 +673,7 @@ def explanation_section(payload: dict, parties: Sequence[str],
     <p class="map-note">Die Abweichungen liegen bei höchstens 0,01&nbsp;Prozentpunkten und stammen vom
        Runden. Die Datenaufbereitung ist damit nachvollziehbar geprüft.</p>
 
-    <h3>10. Wie stark Briefwahl das Ergebnis prägt</h3>
+    <h3>11. Wie stark Briefwahl das Ergebnis prägt</h3>
     <table><tr><th>Wahl</th><th class="num">Briefwahlanteil aller Wähler</th>
       <th class="num">Briefwahlstimmen</th></tr>{rows_postal}</table>
     <p class="map-note">Je nach Wahl lag zwischen 10,6&nbsp;% (Bundestagswahl 2017) und
@@ -570,7 +682,7 @@ def explanation_section(payload: dict, parties: Sequence[str],
        Anteil der AfD bei 39,68&nbsp;% statt 38,22&nbsp;% — die Briefwählerinnen und Briefwähler
        neigten also 2026 erkennbar zur AfD.</p>
 
-    <h3>11. Sozialökonomische Daten</h3>
+    <h3>12. Sozialökonomische Daten</h3>
     <p>Einwohnerzahl, Haushaltsgrößen, Wohnungs- und Mietmerkmale stammen aus dem
        <strong>Zensus 2022</strong> (Stichtag 15.&nbsp;Mai 2022) der Statistischen Ämter des Bundes
        und der Länder. Die amtlichen Ergebnisdateien enthalten keine Gemeindeflächen, und
@@ -579,14 +691,14 @@ def explanation_section(payload: dict, parties: Sequence[str],
        siehe unten). Abdeckung: {area_note}.</p>
     <table>{rows_context}</table>
 
-    <h3>12. Welche Parameter sind weggefallen, und warum?</h3>
+    <h3>13. Welche Parameter sind weggefallen, und warum?</h3>
     <ul>{"".join(dropped)}</ul>
     <p>Bei der Landratswahl 2025 standen im Landkreis Ludwigslust-Parchim nur vier Bewerberinnen und
        Bewerber zur Wahl (CDU, AfD, SPD, GRÜNE) — für FDP, DIE LINKE und BSW existiert dort kein
        Parameter. Die BSW trat 2025 erstmals zu einer Bundestagswahl in MV an und war 2016, 2017 und
        2021 nicht im Wahlgebiet; für sie bleiben deshalb nur die späteren Werte.</p>
 
-    <h3>13. Genauigkeit je Partei und Modell</h3>
+    <h3>14. Genauigkeit je Partei und Modell</h3>
     <table id="acc-table"><thead><tr>
       <th>Modell</th><th>Partei</th><th class="num">Gemeinden</th>
       <th class="num">R²</th><th class="num">R² out-of-fold</th><th class="num">RMSE (pp)</th>
@@ -603,7 +715,7 @@ def explanation_section(payload: dict, parties: Sequence[str],
       Korrelation zwischen Prognose und Ergebnis (1 = perfekt). Die hervorgehobene Zeile gehört zur
       oben gewählten Partei und zum gewählten Modell.</p>
 
-    <h3>14. Alle Gemeinden im Überblick</h3>
+    <h3>15. Alle Gemeinden im Überblick</h3>
     <p>724 Zeilen, eine je Gemeinde. Anklickbare Spaltenüberschriften sortieren die Tabelle.</p>
     <div class="controls" style="margin-bottom:12px">
       <div><label for="q">Gemeinde suchen</label>
@@ -616,6 +728,10 @@ def explanation_section(payload: dict, parties: Sequence[str],
         <option value="res">Ist − Prognose</option>
         <option value="pred">Prognose</option>
         <option value="actual">Ist-Ergebnis</option>
+        <option value="d_ltw21">LTW26 − LTW 2021</option>
+        <option value="d_btw25">LTW26 − BTW 2025</option>
+        <option value="ltw21">LTW 2021</option>
+        <option value="btw25">BTW 2025</option>
         <option value="dichte">Bevölkerungsdichte</option>
         <option value="einwohner">Einwohner</option>
         <option value="flaeche">Fläche</option>
@@ -630,22 +746,27 @@ def explanation_section(payload: dict, parties: Sequence[str],
       <th class="num" data-sort="pred">Prognose</th>
       <th class="num" data-sort="res">Ist − Prognose</th>
       <th class="num" data-sort="ltw21">LTW 2021</th>
+      <th class="num" data-sort="d_ltw21">Δ LTW 2021</th>
       <th class="num" data-sort="btw25">BTW 2025</th>
+      <th class="num" data-sort="d_btw25">Δ BTW 2025</th>
       <th class="num" data-sort="turnout">Wahlbeteiligung</th>
       <th class="num" data-sort="valid">gültige Stimmen</th>
     </tr></thead><tbody></tbody></table>
+    <p class="map-note">Δ ist die Differenz zum Ergebnis der LTW26 in Prozentpunkten, positiv
+      bei einem Gewinn. Bei der BSW fehlt der Wert für 2021, weil die Partei damals nicht
+      zur Wahl stand.</p>
 
-    <h3>15. Genauigkeit im Vergleich</h3>
+    <h3>16. Genauigkeit im Vergleich</h3>
     <p>Wie gut wäre es einfach gewesen, den Wert von 2025 ungewändert zu übernehmen? Weil
        Landesdurchschnitte dicht beieinanderliegen, kommt man damit erstaunlich weit. Erst der
        Vergleich macht das R² der Regression aussagekräftig. Gezeigt ist das Modell
        <code>{default_model_key}</code>.</p>
     <table id="naive-table">{naive_table_html}</table>
 
-    <h3>16. Quellen der Wahlergebnisse</h3>
+    <h3>17. Quellen der Wahlergebnisse</h3>
     <table>{rows_sources}</table>
 
-    <h3>17. Weiterführende Literatur und Dokumentation</h3>
+    <h3>18. Weiterführende Literatur und Dokumentation</h3>
     <ul>
       <li>Landeswahlleiter Mecklenburg-Vorpommern, amtliche Wahlergebnisse und Bekanntmachungen:
         <a href="https://www.laiv-mv.de/Wahlen/">laiv-mv.de/Wahlen</a> ·
@@ -724,7 +845,8 @@ PAGE = r"""<!DOCTYPE html>
      gewähltem Modell ergänzt um die Landratswahl 2025 und die soziale Struktur der Gemeinde
      &mdash; verglichen mit dem amtlichen Ergebnis vom 20.&nbsp;September 2026.
      Fahren Sie mit der Maus über eine Gemeinde, um Prognose, Ergebnis, alle Parteien und die
-     Ausgangswerte zu sehen.</p>
+     Ausgangswerte zu sehen. Neben der Prognose zeigt die Karte auch den reinen Ergebnisvergleich:
+     Gewinne und Verluste gegenüber der Landtagswahl 2021 und gegenüber der Bundestagswahl 2025.</p>
 </div></header>
 
 <main>
@@ -733,7 +855,9 @@ PAGE = r"""<!DOCTYPE html>
     <div class="card-head">
       <h2>Modell und Steuerung</h2>
       <p>Wählen Sie Partei, Modell und Karteninhalt. Karten, Farbskala, Kennzahlen, Rechenbeispiel,
-         Koeffizienten und Tabellen passen sich sofort an.</p>
+         Koeffizienten und Tabellen passen sich sofort an. Die beiden Vergleichskarten
+         „LTW26 − LTW 2021“ und „LTW26 − BTW 2025“ stellen zwei amtliche Ergebnisse gegenüber und
+         benutzen das Modell nicht; das Modell-Auswahlfeld bleibt dann ohne Wirkung auf die Karte.</p>
     </div>
     <div class="controls">
       <div><label for="party">Partei</label><select id="party">{party_options}</select></div>
@@ -903,9 +1027,10 @@ var MAP_NOTE_BASE = {map_note_base};
     $('bar').style.background = METRIC[metric].gradient;
     // Achtung: textContent interpretiert keine HTML-Entities, deshalb hier
     // echte Zeichen und keine geschriebenen Entities wie &nbsp;.
-    $('bar-lo').textContent = metric === 'residual'
+    var diverging = METRIC[metric].kind === 'diverging';
+    $('bar-lo').textContent = diverging
       ? '−' + de(-sc.lo, 1) + ' pp' : de(sc.lo, 0) + NBSP + '%';
-    $('bar-hi').textContent = metric === 'residual'
+    $('bar-hi').textContent = diverging
       ? '+' + de(sc.hi, 1) + ' pp' : de(sc.hi, 0) + NBSP + '%';
     $('bar-note').textContent = METRIC[metric].note;
   }}
@@ -913,32 +1038,63 @@ var MAP_NOTE_BASE = {map_note_base};
 
 
   // ---------- Tooltip ----------
+  function isComparison() {{ return !!METRIC[metric].feature; }}
+  function diffClass(v) {{ return v > 0 ? 'pos' : (v < 0 ? 'neg' : ''); }}
+
   function tipFor(code) {{
     var m = DATA[code];
     var out = '<div class="tt-name">' + m.n + '</div>';
     out += '<div class="tt-sec">' + party + ' &mdash; ' + METRIC[metric].label + '</div>';
     var pred = m.p[model][party], act = m.a[party], res = m.r[model][party];
+    var cmp = isComparison(), feature = METRIC[metric].feature;
+    var prev = cmp ? m.f[party][feature] : null;
+    var dif = cmp ? m.d[metric][party] : null;
     out += '<div class="tt-grid">';
-    out += '<span>Prognose</span><b>' + (pred === null ? '–' : de(pred) + '&nbsp;%') + '</b>';
-    out += '<span>Ist-Ergebnis</span><b>' + (act === null ? '–' : de(act) + '&nbsp;%') + '</b>';
-    out += '<span>Ist &minus; Prognose</span><b class="' + (res > 0 ? 'pos' : (res < 0 ? 'neg' : ''))
-         + '">' + signed(res) + '&nbsp;pp</b>';
+    if (cmp) {{
+      out += '<span>' + METRIC[metric].prev + '</span><b>'
+           + (prev === null ? '–' : de(prev) + '&nbsp;%') + '</b>';
+      out += '<span>Ist-Ergebnis LTW26</span><b>'
+           + (act === null ? '–' : de(act) + '&nbsp;%') + '</b>';
+      out += '<span>Ist &minus; ' + METRIC[metric].prev + '</span><b class="' + diffClass(dif)
+           + '">' + signed(dif) + '&nbsp;pp</b>';
+    }} else {{
+      out += '<span>Prognose</span><b>' + (pred === null ? '–' : de(pred) + '&nbsp;%') + '</b>';
+      out += '<span>Ist-Ergebnis</span><b>' + (act === null ? '–' : de(act) + '&nbsp;%') + '</b>';
+      out += '<span>Ist &minus; Prognose</span><b class="' + diffClass(res)
+           + '">' + signed(res) + '&nbsp;pp</b>';
+    }}
     Object.keys(PREDICTOR).forEach(function (k) {{
+      if (cmp && k === feature) return;          // steht schon in der Kopfzeile
       var v = m.f[party] ? m.f[party][k] : null;
       out += '<span>' + PREDICTOR[k] + '</span><b>' + (v === null ? '–' : de(v, 2)) + '</b>';
     }});
     out += '</div>';
 
-    out += '<div class="tt-sec">Alle Parteien &mdash; Ist LTW26 / Prognose ' + model + '</div>';
-    out += '<table><tr><th>Partei</th><th>Ist</th><th>Prognose</th><th>Diff.</th></tr>';
-    PARTIES.forEach(function (p) {{
-      var a = m.a[p], pr = m.p[model][p], rr = m.r[model][p];
-      out += '<tr' + (p === party ? ' class="hl"' : '') + '>'
-        + '<td>' + p + '</td>'
-        + '<td>' + (a === null ? '–' : de(a)) + '</td>'
-        + '<td>' + (pr === null ? '–' : de(pr)) + '</td>'
-        + '<td>' + signed(rr) + '</td></tr>';
-    }});
+    if (cmp) {{
+      out += '<div class="tt-sec">Alle Parteien &mdash; Ist LTW26 / ' + METRIC[metric].prev
+           + ' / Differenz</div>';
+      out += '<table><tr><th>Partei</th><th>LTW26</th><th>' + METRIC[metric].prev
+           + '</th><th>Diff.</th></tr>';
+      PARTIES.forEach(function (p) {{
+        var a = m.a[p], b = m.f[p][feature], dd = m.d[metric][p];
+        out += '<tr' + (p === party ? ' class="hl"' : '') + '>'
+          + '<td>' + p + '</td>'
+          + '<td>' + (a === null ? '–' : de(a)) + '</td>'
+          + '<td>' + (b === null ? '–' : de(b)) + '</td>'
+          + '<td>' + signed(dd) + '</td></tr>';
+      }});
+    }} else {{
+      out += '<div class="tt-sec">Alle Parteien &mdash; Ist LTW26 / Prognose ' + model + '</div>';
+      out += '<table><tr><th>Partei</th><th>Ist</th><th>Prognose</th><th>Diff.</th></tr>';
+      PARTIES.forEach(function (p) {{
+        var a = m.a[p], pr = m.p[model][p], rr = m.r[model][p];
+        out += '<tr' + (p === party ? ' class="hl"' : '') + '>'
+          + '<td>' + p + '</td>'
+          + '<td>' + (a === null ? '–' : de(a)) + '</td>'
+          + '<td>' + (pr === null ? '–' : de(pr)) + '</td>'
+          + '<td>' + signed(rr) + '</td></tr>';
+      }});
+    }}
     out += '</table>';
 
     out += '<div class="tt-sec">Sozialer Kontext</div><div class="tt-hist">';
@@ -953,7 +1109,11 @@ var MAP_NOTE_BASE = {map_note_base};
       + di(m.v) + ' gültige Zweitstimmen (ohne Briefwahl) &middot; Wahlbeteiligung '
       + de(m.t, 1) + '&nbsp;%';
     out += '</div>';
-    if (pred === null) {{
+    if (cmp && dif === null) {{
+      out += '<div class="tt-warn">Für diese Gemeinde gibt es keinen Vergleichswert aus '
+           + METRIC[metric].prev + '.</div>';
+    }}
+    if (!cmp && pred === null) {{
       out += '<div class="tt-warn">Für diese Gemeinde liegen im Modell ' + model
            + ' nicht alle Parameter vor.</div>';
     }}
@@ -994,6 +1154,12 @@ var MAP_NOTE_BASE = {map_note_base};
       note += 'Ein durchschnittlicher Fehler von ' + de(row.rmse) + ' Prozentpunkten heißt: In einer '
             + 'typischen Gemeinde verfehlt die Prognose das Ergebnis dieser Partei um gut '
             + de(row.rmse) + ' Prozentpunkte.';
+    }}
+    if (!METRIC[metric].modelDependent) {{
+      note = (note ? note + ' ' : '')
+           + 'Der Karteninhalt „' + METRIC[metric].label + '“ ist ein reiner Vergleich zweier '
+           + 'Wahlergebnisse und benutzt das Modell nicht; die Kennzahlen oben beschreiben '
+           + 'weiterhin das gewählte Modell. ';
     }}
     $('kpi-note').innerHTML = note;
     $('party-line').innerHTML = party + ' &middot; Modell <code>' + model + '</code>'
@@ -1108,6 +1274,7 @@ var MAP_NOTE_BASE = {map_note_base};
       case 'actual': return m.a[party]; case 'pred': return m.p[model][party];
       case 'res': return m.r[model][party];
       case 'ltw21': return m.f[party].LTW21; case 'btw25': return m.f[party].BTW25;
+      case 'd_ltw21': return m.d.vs_ltw21[party]; case 'd_btw25': return m.d.vs_btw25[party];
       case 'turnout': return m.t; case 'valid': return m.v;
       case 'einwohner': return m.c.einwohner; case 'flaeche': return m.c.flaeche_km2;
       case 'dichte': return m.c.dichte;
@@ -1133,6 +1300,7 @@ var MAP_NOTE_BASE = {map_note_base};
     var slice = rowsPer === 9999 ? list : list.slice(0, rowsPer);
     $('mtable').querySelector('tbody').innerHTML = slice.map(function (e) {{
       var m = e.m, res = m.r[model][party], act = m.a[party];
+      var d21 = m.d.vs_ltw21[party], d25 = m.d.vs_btw25[party];
       var cls = res === null ? '' : (res > 0 ? 'pos' : (res < 0 ? 'neg' : ''));
       var w = act === null ? 0 : Math.max(0, act / max * 100);
       return '<tr><td>' + m.n + '</td><td>' + (m.lk || '') + '</td>'
@@ -1143,10 +1311,12 @@ var MAP_NOTE_BASE = {map_note_base};
         + '<td class="num">' + de(m.p[model][party]) + '</td>'
         + '<td class="num ' + cls + '">' + signed(res) + '</td>'
         + '<td class="num">' + de(m.f[party].LTW21) + '</td>'
+        + '<td class="num ' + diffClass(d21) + '">' + signed(d21) + '</td>'
         + '<td class="num">' + de(m.f[party].BTW25) + '</td>'
+        + '<td class="num ' + diffClass(d25) + '">' + signed(d25) + '</td>'
         + '<td class="num">' + de(m.t, 1) + '</td>'
         + '<td class="num">' + di(m.v) + '</td></tr>';
-    }}).join('') || '<tr><td colspan="12" class="mini">keine Gemeinde gefunden</td></tr>';
+    }}).join('') || '<tr><td colspan="14" class="mini">keine Gemeinde gefunden</td></tr>';
     var foot = document.getElementById('table-foot');
     if (!foot) {{
       foot = document.createElement('p');
@@ -1158,26 +1328,54 @@ var MAP_NOTE_BASE = {map_note_base};
   }}
 
   function fillLegendVotes() {{
-    // Wichtig: Ist und Prognose nur ueber dieselbe Menge Gemeinden mitteln,
-    // sonst werden zwei verschiedene Gebiete verglichen.
-    var act = [], pred = [], valid = 0, covered = 0;
+    // Wichtig: Ist und Vergleichswert nur ueber dieselbe Menge Gemeinden
+    // mitteln, sonst werden zwei verschiedene Gebiete verglichen.
+    var cmp = isComparison(), feature = METRIC[metric].feature;
+    var act = [], other = [], covered = 0;
     Object.keys(DATA).forEach(function (c) {{
       var m = DATA[c];
-      if (m.a[party] === null || m.p[model][party] === null) return;
-      covered += 1; valid += m.v;
-      act.push([m.a[party], m.v]); pred.push([m.p[model][party], m.v]);
+      if (cmp) {{
+        // massgeblich ist die Differenz, nicht der Vergleichswert allein: bei
+        // einer Partei, die es damals nicht gab (BSW 2021), ist sie null.
+        if (m.d[metric][party] === null || m.f[party][feature] === null) return;
+      }} else if (m.p[model][party] === null) {{
+        return;
+      }}
+      if (m.a[party] === null) return;
+      covered += 1;
+      act.push([m.a[party], m.v]);
+      other.push([cmp ? m.f[party][feature] : m.p[model][party], m.v]);
     }});
     function share(rows) {{
       var s = 0, v = 0;
       rows.forEach(function (r) {{ s += r[0] * r[1]; v += r[1]; }});
       return v > 0 ? s / v : null;
     }}
-    var a = share(act), p = share(pred);
+    var a = share(act), b = share(other);
     var alle = Object.keys(DATA).length;
+    if (cmp) {{
+      if (covered === 0) {{
+        $('legend-votes').innerHTML = '<strong>' + party + ', ' + METRIC[metric].label
+          + ':</strong> Für diese Partei gibt es zu ' + METRIC[metric].prev
+          + ' keine amtlichen Zweitstimmenanteile je Gemeinde, also auch keine Differenz.';
+        return;
+      }}
+      $('legend-votes').innerHTML = '<strong>' + party + ', ' + METRIC[metric].label + ':</strong> '
+        + METRIC[metric].prev + ' <span class="num">' + (b === null ? '–' : de(b) + '&nbsp;%')
+        + '</span>, LTW26 tatsächlich <span class="num">'
+        + (a === null ? '–' : de(a) + '&nbsp;%') + '</span>, Differenz <span class="num">'
+        + (a === null || b === null ? '–' : signed(a - b) + '&nbsp;pp')
+        + '</span>. Nach gültigen Zweitstimmen gewichtet, gemittelt über <strong>' + di(covered)
+        + '</strong> von ' + di(alle) + ' Gemeinden'
+        + (covered < alle ? ' — für die übrigen Gemeinden fehlt der Vergleichswert ('
+            + METRIC[metric].prev + '), deshalb sind die Werte nicht für das ganze Land ausgewiesen.'
+            : '.');
+      return;
+    }}
     $('legend-votes').innerHTML = '<strong>' + party + ' bei der LTW26, Modell ' + model + ':</strong> '
-      + 'Prognose <span class="num">' + (p === null ? '–' : de(p) + '&nbsp;%') + '</span>, '
+      + 'Prognose <span class="num">' + (b === null ? '–' : de(b) + '&nbsp;%') + '</span>, '
       + 'tatsächlich <span class="num">' + (a === null ? '–' : de(a) + '&nbsp;%') + '</span>, '
-      + 'Differenz <span class="num">' + (a === null || p === null ? '–' : signed(a - p) + '&nbsp;pp')
+      + 'Differenz <span class="num">' + (a === null || b === null ? '–' : signed(a - b) + '&nbsp;pp')
       + '</span>. Nach Wahlberechtigten gewichtet, gemittelt über <strong>' + di(covered)
       + '</strong> von ' + di(alle) + ' Gemeinden'
       + (covered < alle ? ' — außerhalb dieser Gemeinden liegt für diese Partei im Modell keine '
@@ -1210,15 +1408,17 @@ var MAP_NOTE_BASE = {map_note_base};
     }}).join('');
   }}
 
-  function refresh() {{
-    MAP_NOTES = MAP_NOTE_BASE;
+function refresh() {{
     var warn = '';
-    if (model === 'wahl6lrw' || model === 'soziolrw') {{
+    // Der Hinweis auf die Landratswahl gilt nur fuer Karteninhalte, die das
+    // Modell ueberhaupt verwenden; ein reiner Ergebnisvergleich nicht.
+    if (METRIC[metric].modelDependent && (model === 'wahl6lrw' || model === 'soziolrw')) {{
       warn = ' <strong style="color:#8a6100">Hinweis:</strong> Das Modell ' + model
         + ' nutzt die Landratswahl 2025 und ist deshalb nur im Landkreis Ludwigslust-Parchim '
-        + 'sinnvoll. Außerhalb dieses Landkreises sind die betreffenden Gemeinden grau.';
+        + 'sinnvoll. Außerhalb dieses Landkreises sind die betroffenen Gemeinden grau.';
     }}
-    MAP_NOTES = {{mv: MAP_NOTE_BASE.mv + warn, lup: MAP_NOTE_BASE.lup}};
+    MAP_NOTES = {{mv: MAP_NOTE_BASE.mv + ' ' + METRIC[metric].missing + warn,
+                 lup: MAP_NOTE_BASE.lup}};
     paint();
     renderKpi();
     renderExample();
@@ -1279,20 +1479,39 @@ var MAP_NOTE_BASE = {map_note_base};
 # --------------------------------------------------------------------------
 # Seite
 # --------------------------------------------------------------------------
+def diff_value(municipality: dict, metric: str, party: str) -> Optional[float]:
+    """Ist-Ergebnis LTW26 minus Ergebnis einer Vergleichswahl, in Prozentpunkten."""
+    spec = METRICS[metric]
+    if party in NOT_COMPARABLE.get(metric, set()):
+        return None            # Vergleichswahl gab es fuer diese Partei nicht
+    actual = municipality["actual"].get(party)
+    previous = municipality["features"][party].get(spec["feature"])
+    if actual is None or previous is None:
+        return None
+    return float(actual) - float(previous)
+
+
+def metric_values(payload: dict, model: str, metric: str, party: str) -> Dict[str, Optional[float]]:
+    """Werte je Gemeinde fuer einen Karteninhalt."""
+    municipalities = payload["municipalities"]
+    if metric in COMPARISON_METRICS:
+        return {code: diff_value(m, metric, party) for code, m in municipalities.items()}
+    column = {"residual": "residual_pp", "predicted": "predicted", "actual": "actual"}[metric]
+    return {
+        code: (m[column][party] if column == "actual" else m[column][model][party])
+        for code, m in municipalities.items()
+    }
+
+
 def build_fill_pool(payload: dict, regions: Dict[str, dict], parties, models):
     """Fuellfarben fuer alle Kombinationen, mit Duplikat-Eliminierung."""
-    municipalities = payload["municipalities"]
     values: Dict[str, Dict[str, Dict[str, Dict[str, Optional[float]]]]] = {}
     for model in models:
         values[model] = {}
         for metric in METRICS:
             values[model][metric] = {}
             for party in parties:
-                column = {"residual": "residual_pp", "predicted": "predicted", "actual": "actual"}[metric]
-                values[model][metric][party] = {
-                    code: (m[column][party] if column == "actual" else m[column][model][party])
-                    for code, m in municipalities.items()
-                }
+                values[model][metric][party] = metric_values(payload, model, metric, party)
     pool: List[Dict[str, str]] = []
     index: Dict[str, int] = {}
     scales: Dict[str, Dict[str, Dict[str, Dict[str, dict]]]] = {}
@@ -1365,6 +1584,9 @@ def main() -> int:
                        for p in parties} for mo in models},
             "f": {p: {k: (None if v is None else round(v, 2)) for k, v in m["features"][p].items()}
                   for p in parties},
+            "d": {metric: {p: (None if diff_value(m, metric, p) is None
+                               else round(diff_value(m, metric, p), 2)) for p in parties}
+                  for metric in COMPARISON_METRICS},
             "c": {k: v for k, v in m.get("context", {}).items()},
         }
 
@@ -1410,8 +1632,7 @@ def main() -> int:
                     svg_region(regions["lup"], default_fills["lup"]))
     )
     map_note_base = {
-        "mv": f"{len(regions['mv']['shapes'])} Gemeinden · mit der Maus über eine Fläche fahren. "
-              f"Grau = für diese Gemeinde liegt keine Prognose vor.",
+        "mv": f"{len(regions['mv']['shapes'])} Gemeinden · mit der Maus über eine Fläche fahren.",
         "lup": f"{len(regions['lup']['shapes'])} Gemeinden des Landkreises Ludwigslust-Parchim · "
                f"gleiche Farbskala wie die Landeskarte, deshalb direkt vergleichbar.",
     }
@@ -1437,7 +1658,11 @@ def main() -> int:
         model_options=model_options,
         metric_options=metric_options,
         metric_meta=json.dumps({k: {"label": v["label"], "unit": v["unit"], "note": v["note"],
-                                    "gradient": v["gradient"]} for k, v in METRICS.items()},
+                                    "kind": v["kind"], "gradient": v["gradient"],
+                                    "missing": v["missing"], "prev": v.get("prev_label", ""),
+                                    "feature": v.get("feature", ""),
+                                    "modelDependent": v["model_dependent"]}
+                               for k, v in METRICS.items()},
                                ensure_ascii=False, separators=(",", ":")),
         map_blocks=map_blocks,
         map_note_base=json.dumps(map_note_base, ensure_ascii=False),
